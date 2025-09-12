@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Поиск заказа</title>
+<style>
+body { font-family: Arial, sans-serif; margin: 20px; }
+input { width: 300px; padding: 5px; margin-right: 10px; }
+button { padding: 5px 10px; }
+table { border-collapse: collapse; margin-top: 20px; width: 100%; max-width: 800px; }
+th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+th { background-color: #f2f2f2; }
+.nested-table { margin-left: 20px; width: auto; }
+.error { color: red; margin-top: 20px; }
+</style>
+</head>
+<body>
+<h2>Поиск заказа по Order UID</h2>
+<input type="text" id="orderUID" placeholder="Введите order_uid" />
+<button onclick="fetchOrder()">Найти заказ</button>
+
+<div id="result"></div>
+
+<script>
+async function fetchOrder() {
+const uid = document.getElementById('orderUID').value.trim();
+const resultDiv = document.getElementById('result');
+resultDiv.innerHTML = ''; // очистить предыдущий результат
+
+if (!uid) {
+resultDiv.innerHTML = '<p class="error">Введите order_uid</p>';
+return;
+}
+
+resultDiv.innerHTML = '<p>Загрузка...</p>';
+
+try {
+const response = await fetch(`http://localhost:8081/order/${uid}`);
+if (!response.ok) {
+resultDiv.innerHTML = '<p class="error">Заказ не найден или ошибка сервера</p>';
+return;
+}
+
+const order = await response.json();
+resultDiv.innerHTML = renderOrderTable(order);
+
+} catch (err) {
+resultDiv.innerHTML = `<p class="error">Ошибка запроса: ${err}</p>`;
+}
+}
+
+function renderOrderTable(order) {
+let html = '<table>';
+html += `<tr><th>Поле</th><th>Значение</th></tr>`;
+
+for (const key in order) {
+if (typeof order[key] === 'object' && order[key] !== null) {
+html += `<tr><td>${key}</td><td>${renderNestedTable(order[key])}</td></tr>`;
+} else {
+html += `<tr><td>${key}</td><td>${order[key]}</td></tr>`;
+}
+}
+
+html += '</table>';
+return html;
+}
+
+function renderNestedTable(obj) {
+let html = '<table class="nested-table">';
+html += `<tr><th>Поле</th><th>Значение</th></tr>`;
+for (const key in obj) {
+if (Array.isArray(obj[key])) {
+html += `<tr><td>${key}</td><td>`;
+obj[key].forEach((item, index) => {
+html += `<p>Элемент ${index + 1}: ${renderNestedTable(item)}</p>`;
+});
+html += `</td></tr>`;
+} else if (typeof obj[key] === 'object' && obj[key] !== null) {
+html += `<tr><td>${key}</td><td>${renderNestedTable(obj[key])}</td></tr>`;
+} else {
+html += `<tr><td>${key}</td><td>${obj[key]}</td></tr>`;
+}
+}
+html += '</table>';
+return html;
+}
+</script>
+</body>
+</html>
+

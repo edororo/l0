@@ -1,0 +1,8 @@
+*.exe
+*.out
+*.dll
+*.so
+.vscode/
+.idea/
+vendor/
+.env
