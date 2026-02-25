@@ -3,8 +3,8 @@ package main
 import (
 	"L0/internal/api"
 	"L0/internal/cache"
-	"L0/internal/db"
 	"L0/internal/kafka"
+	"L0/internal/service"
 	"context"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
@@ -18,41 +18,36 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Настройки подключения к PostgreSQL
-	if err := godotenv.Load(); err != nil {
-		log.Println("Warning: .env file not found, using system environment")
-	}
+	_ = godotenv.Load()
+
 	databaseURL := os.Getenv("DATABASE")
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
-		log.Fatal("Ошибка подключения к PostgreSQL:", err)
+		log.Fatal("Ошибка подключения к БД:", err)
 	}
 	defer pool.Close()
 	log.Println("Подключение к PostgreSQL успешно")
 
-	//  Инициализация кэша
-	db.OrderCache = cache.NewCache()
-	log.Println("Кэш заказов создан")
+	orderCache := cache.NewCache(5*time.Minute, 1000)
+	orderService := service.NewOrderService(pool, orderCache)
 
-	//  HTTP сервер
 	go func() {
-		api.StartServer(ctx, ":8081", pool, db.OrderCache)
+		api.StartServer(ctx, ":8081", orderService)
 	}()
 
-	//  Kafka consumer
 	go func() {
 		brokers := []string{os.Getenv("BROKERS")}
 		topic := os.Getenv("TOPIC")
 		groupID := os.Getenv("GROUP_ID")
-		kafka.StartConsumer(ctx, brokers, topic, groupID, pool, db.OrderCache)
+		kafka.StartConsumer(ctx, brokers, topic, groupID, orderService)
 	}()
 
-	//  Graceful shutdown
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt)
 	<-stop
-	log.Println("Завершение работы приложения...")
+
+	log.Println("Завершение работы...")
 	cancel()
-	time.Sleep(1 * time.Second) // даём горутинам завершиться
+	time.Sleep(time.Second)
 	log.Println("Приложение остановлено")
 }

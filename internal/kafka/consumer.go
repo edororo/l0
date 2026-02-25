@@ -1,25 +1,21 @@
 package kafka
 
 import (
-	"L0/internal/cache"
-	"L0/internal/db"
 	"L0/internal/models"
+	"L0/internal/service"
 	"context"
 	"encoding/json"
 	"github.com/segmentio/kafka-go"
 	"log"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// StartConsumer запускает Kafka consumer для топика orders
-func StartConsumer(ctx context.Context, brokers []string, topic string, groupID string, dbPool *pgxpool.Pool, orderCache *cache.Cache) {
+func StartConsumer(ctx context.Context, brokers []string, topic string, groupID string, service *service.OrderService) {
 	r := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:  brokers,
 		Topic:    topic,
 		GroupID:  groupID,
-		MinBytes: 10e3, // 10KB
-		MaxBytes: 10e6, // 10MB
+		MinBytes: 10e3,
+		MaxBytes: 10e6,
 	})
 
 	log.Printf("Kafka consumer запущен. Topic=%s", topic)
@@ -27,42 +23,30 @@ func StartConsumer(ctx context.Context, brokers []string, topic string, groupID 
 	for {
 		msg, err := r.ReadMessage(ctx)
 		if err != nil {
+			if ctx.Err() != nil {
+				log.Println("Consumer остановлен")
+				return
+			}
 			log.Println("Ошибка чтения сообщения:", err)
-			continue
-		}
-
-		// Проверяем пустое сообщение
-		if len(msg.Value) == 0 {
-			log.Println("Пустое сообщение, пропускаем")
 			continue
 		}
 
 		var order models.Order
 		if err := json.Unmarshal(msg.Value, &order); err != nil {
-			log.Println("Ошибка парсинга JSON:", err, "Сообщение:", string(msg.Value))
+			log.Println("Ошибка JSON:", err)
 			continue
 		}
 
 		if order.OrderUID == "" {
-			log.Println("Пустой order_uid, пропускаем")
+			log.Println("Пустой order_uid")
 			continue
 		}
 
-		// Проверка дубликата в кэше
-		if _, exists := orderCache.Get(order.OrderUID); exists {
-			log.Println("Заказ уже существует в кэше, пропускаем:", order.OrderUID)
+		if err := service.CreateOrder(ctx, order); err != nil {
+			log.Println("Ошибка сохранения:", err)
 			continue
 		}
 
-		// Сохраняем заказ в БД
-		if err := db.InsertOrder(ctx, dbPool, order); err != nil {
-			log.Printf("Ошибка вставки заказа %s: %v", order.OrderUID, err)
-			continue
-		}
-
-		// Добавляем в кэш
-		orderCache.Set(order.OrderUID, order)
-
-		log.Println("Заказ успешно обработан и добавлен в БД и кэш:", order.OrderUID)
+		log.Println("Заказ обработан:", order.OrderUID)
 	}
 }
