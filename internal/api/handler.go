@@ -1,24 +1,34 @@
 package api
 
 import (
-	"L0/internal/service"
-	"context"
 	"encoding/json"
-	"github.com/gorilla/mux"
 	"net/http"
+
+	appErr "L0/internal/errors"
+	"L0/internal/service"
+
+	"github.com/gorilla/mux"
 )
 
-// обрабатывает запрос GET /order/{order_uid}
-func GetOrderHandler(w http.ResponseWriter, r *http.Request, ctx context.Context, service *service.OrderService) {
-	vars := mux.Vars(r)
-	uid := vars["order_uid"]
+func GetOrder(s *service.OrderService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 
-	order, err := service.GetOrder(ctx, uid)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
+		id := mux.Vars(r)["order_uid"]
+		o, err := s.Get(r.Context(), id)
+
+		if err != nil {
+			switch err {
+			case appErr.ErrInvalidInput:
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			case appErr.ErrNotFound:
+				http.Error(w, err.Error(), http.StatusNotFound)
+			default:
+				http.Error(w, appErr.ErrInternal.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(o)
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(order)
 }

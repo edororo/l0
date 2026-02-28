@@ -1,53 +1,51 @@
 package main
 
 import (
-	"L0/internal/api"
-	"L0/internal/cache"
-	"L0/internal/kafka"
-	"L0/internal/service"
 	"context"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/joho/godotenv"
 	"log"
 	"os"
 	"os/signal"
 	"time"
+
+	"L0/internal/api"
+	"L0/internal/cache"
+	"L0/internal/config"
+	"L0/internal/kafka"
+	"L0/internal/repository/postgres"
+	"L0/internal/service"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	_ = godotenv.Load()
+	if err := config.LoadEnv(); err != nil {
+		log.Println("Warning: .env not found")
+	}
 
-	databaseURL := os.Getenv("DATABASE")
-	pool, err := pgxpool.New(ctx, databaseURL)
+	pool, err := pgxpool.New(ctx, config.DatabaseURL)
 	if err != nil {
-		log.Fatal("Ошибка подключения к БД:", err)
+		log.Fatalf("Error connecting to PostgreSQL: %v", err)
 	}
 	defer pool.Close()
-	log.Println("Подключение к PostgreSQL успешно")
+	log.Println("PostgreSQL connected")
 
-	orderCache := cache.NewCache(5*time.Minute, 1000)
-	orderService := service.NewOrderService(pool, orderCache)
+	ttl, maxItems := config.CacheTTL, config.CacheMaxItems
+	orderCache := cache.NewCache(ttl, maxItems)
 
-	go func() {
-		api.StartServer(ctx, ":8081", orderService)
-	}()
+	repo := postgres.NewRepo(pool)
+	orderService := service.New(repo, orderCache)
 
-	go func() {
-		brokers := []string{os.Getenv("BROKERS")}
-		topic := os.Getenv("TOPIC")
-		groupID := os.Getenv("GROUP_ID")
-		kafka.StartConsumer(ctx, brokers, topic, groupID, orderService)
-	}()
+	go api.StartServer(ctx, config.HTTPPort, orderService)
+	go kafka.StartConsumer(ctx, []string{config.Brokers}, config.Topic, config.GroupID, repo, orderCache)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt)
 	<-stop
-
-	log.Println("Завершение работы...")
+	log.Println("Shutting down...")
 	cancel()
-	time.Sleep(time.Second)
-	log.Println("Приложение остановлено")
+	time.Sleep(1 * time.Second)
+	log.Println("Application stopped")
 }
